@@ -23,22 +23,36 @@
 // };
 
 // export default TextareaWithButton;
-
+import { FormEvent, useState } from "react";
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CircleArrowUp } from 'lucide-react'
 
-export function InputWithButton() {
-  const handleSubmit = (event: React.FormEvent) => {
-    event.preventDefault();
+interface InputWithButtonProps {
+  onSend: (message: string) => void;
+}
+
+export function InputWithButton({ onSend }: InputWithButtonProps) {
+  const [message, setMessage] = useState('');
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault()
     // Handle form submission logic here
-    console.log("clicked");
+    console.log("clicked")
+    if (message.trim()) {
+      onSend(message);
+      setMessage('');
+    }
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex w-full items-center space-x-2">
-      <Input type="" placeholder="What are you interested in?" />
-      <Button type="submit"> 
+      <Input 
+        placeholder="What are you interested in?" 
+        value={message}
+        onChange={(event) => setMessage(event.target.value)}
+      />
+      <Button type="submit" size="icon"> 
         <CircleArrowUp className="h-7 w-7"/> 
       </Button>
     </form>

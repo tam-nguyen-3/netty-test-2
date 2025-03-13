@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { ThemeProvider } from "@/components/theme-provider"
 import { ModeToggle } from './components/mode-toggle'
 import { AppSidebar } from './components/app-sidebar'
@@ -22,6 +22,14 @@ const App = () => {
       text: 'Hello, how can I help you today?' 
     }
   ])
+
+  // Create a ref for the messages container
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom whenever messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleSendMessage = (message: string) => {
     const userMessage: Message = { 
@@ -51,24 +59,28 @@ const App = () => {
             <ModeToggle />
           </header>
 
-          {/* Chat messages area */}
+          {/* Centered, width-constrained chat container */}
           <div className="flex-1 overflow-y-auto p-4 pb-20">
-            {messages.map((message, index) => (
-              <div 
-                key={index} 
-                className={`mb-4 max-w-3/4 ${message.sender === 'user' ? 'ml-auto' : 'mr-auto'}`}
-              >
+            <div className="max-w-2xl mx-auto w-full">
+              {messages.map((message) => (
                 <div 
-                  className={`p-3 rounded-lg ${
-                    message.sender === 'user' 
-                      ? 'bg-primary text-primary-foreground rounded-tr-none' 
-                      : 'bg-muted rounded-tl-none'
-                  }`}
+                  key={message.id} 
+                  className={`mb-4 ${message.sender === 'user' ? 'ml-auto' : 'mr-auto'} max-w-[80%]`}
                 >
-                  {message.text}
+                  <div 
+                    className={`p-3 rounded-lg ${
+                      message.sender === 'user' 
+                        ? 'bg-primary text-primary-foreground rounded-tr-none' 
+                        : 'bg-muted rounded-tl-none'
+                    }`}
+                  >
+                    {message.text}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+              {/* Invisible element to scroll to */}
+              <div ref={messagesEndRef} />
+            </div>
           </div>
           
           <InputWithButton onSend={handleSendMessage}/>

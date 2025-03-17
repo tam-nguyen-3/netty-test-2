@@ -33,9 +33,10 @@ interface InputWithButtonProps {
 }
 
 export function InputWithButton({ onSend }: InputWithButtonProps) {
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<string>('');
 
   const handleSubmit = (event: FormEvent) => {
+    console.log("default prevented")
     event.preventDefault()
     // Handle form submission logic here
     console.log("clicked")

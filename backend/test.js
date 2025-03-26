@@ -1,3 +1,5 @@
+// OUTDATED
+
 const axios = require("axios");
 
 async function testChatHistory() {

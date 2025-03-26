@@ -12,13 +12,16 @@ const createEmbedding = async (text) => {
 
 // convert profile to text. data
 const profileToText = (data) => {
-  const textLines = Object.entries(data).map(([key, value]) => {
-    if (Array.isArray(value)) {
-      return `${key}: [${value.join(", ")}]`;
-    } else {
-      return `${key}: ${value}`;
-    }
-  });
+  const excludedFields = ["_id", "createdAt", "__v"];
+  const textLines = Object.entries(data)
+    .filter(([key]) => !excludedFields.includes(key))
+    .map(([key, value]) => {
+      if (Array.isArray(value)) {
+        return `${key}: [${value.join(", ")}]`;
+      } else {
+        return `${key}: ${value}`;
+      }
+    });
   return textLines.join("; ");
 };
 
@@ -77,20 +80,24 @@ const extractIdsFromResponse = (responseText) => {
 
 const updateUserEmbedding = async (profile) => {
   try {
-    const profileText = profileToText(profile);
+    console.log(profile);
+    const plainProfile = profile.toObject ? profile.toObject() : profile;
+    const profileText = profileToText(plainProfile);
+    console.log(profileText);
     const embedding = await createEmbedding(profileText);
     await UserEmbedding.findOneAndUpdate(
-      { userId: profile.id.toString() },
+      { userId: profile.userId.toString() },
       {
-        userId: profile.id.toString(),
+        userId: profile.userId.toString(),
         embedding: embedding,
+        profileText: profileText,
       },
       { upsert: true }
     );
 
-    console.log(`Successfully updated embedding for user ${profile.id}`);
+    console.log(`Successfully updated embedding for user ${profile.userId}`);
   } catch (error) {
-    console.error(`Error updating embedding for user ${profile.id}:`, error);
+    console.error(`Error updating embedding for user ${profile.userId}:`, error);
     throw error;
   }
 };

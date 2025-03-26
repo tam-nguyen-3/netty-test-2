@@ -1,113 +1,120 @@
 require("dotenv").config();
 const express = require("express");
-const axios = require("axios");
 const cors = require("cors");
+const fs = require("fs");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const Chat = require("./models/Chat");
+const mongoose = require("mongoose");
+const {
+  getContextualProfiles,
+  cleanChatHistory,
+  extractIdsFromResponse,
+} = require("./helper");
+
 const app = express();
 const port = 3001;
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-app.use(express.json());
-app.use(cors()); // Add CORS middleware
-// Load members from data.json
-const members = require("./data.json");
-const apiKey = process.env.GOOGLE_API_KEY;
 
-// Initialize Google Generative AI client
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// AI Models
+const apiKey = process.env.GOOGLE_API_KEY;
 const genai = new GoogleGenerativeAI(apiKey);
 const model = genai.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+// Load user data TODO: replace with mongodb
+const rawData = fs.readFileSync("./data.json", "utf-8");
+const data = JSON.parse(rawData);
+
+// Helper functions
+const getUserProfile = (userId) => {
+  return data.find((user) => user.id === userId);
+};
+
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("Connected to MongoDB"))
+  .catch((err) => console.error("Error connecting to MongoDB:", err));
+
+
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-// Convert data.json to object
-const fs = require("fs");
-const rawData = fs.readFileSync("./data.json", "utf-8");
-const data = JSON.parse(rawData);
-
-// Convert each member's data to a string
-const memberStrings = data.map((member) => {
-  return `${member.name} is a ${member.age}-year-old ${
-    member.profession
-  } interested in ${member.interests.join(", ")}`;
-});
-
-// Helper function to create embeddings for a text
-async function createEmbedding(text) {
-  const embedModel = genai.getGenerativeModel({
-    model: "text-embedding-004",
-  });
-  const response = await embedModel.embedContent(text);
-  return response.embedding.values;
-}
-
-// Helper function to find similar profiles using embeddings
-async function findSimilarProfiles(query) {
-  const queryEmbedding = await createEmbedding(query);
-  const profilesWithScores = await Promise.all(
-    memberStrings.map(async (member) => {
-      const profileEmbedding = await createEmbedding(member);
-      const similarity = cosineSimilarity(queryEmbedding, profileEmbedding);
-      return { ...member, similarity };
-    })
-  );
-  return profilesWithScores.sort((a, b) => b.similarity - a.similarity);
-}
-
-// Helper function to calculate cosine similarity
-function cosineSimilarity(vecA, vecB) {
-  const dotProduct = vecA.reduce((acc, val, i) => acc + val * vecB[i], 0);
-  const normA = Math.sqrt(vecA.reduce((acc, val) => acc + val * val, 0));
-  const normB = Math.sqrt(vecB.reduce((acc, val) => acc + val * val, 0));
-  return dotProduct / (normA * normB);
-}
-
-// POST /chat endpoint
 app.post("/chat", async (req, res) => {
   try {
-    const { query } = req.body;
-    if (!query) {
-      return res.status(400).json({ error: "No query provided" });
+    const { userId, query } = req.body;
+    if (!query || !userId) {
+      return res.status(400).json({ error: "No query or userId provided" });
+    }
+    const currentUserProfile = getUserProfile(userId);
+    if (!currentUserProfile) {
+      return res.status(404).json({ error: "User profile not found" });
+    }
+    let currentChat =
+      (await Chat.findOne({ userId })) || new Chat({ userId, history: [] });
+
+    if (!currentChat.history.length || currentChat.history[0].role !== "user") {
+      currentChat.history.unshift({
+        role: "user",
+        parts: [{ text: "Hello" }],
+      });
     }
 
-    const similarProfiles = await findSimilarProfiles(query);
+    // get contextual profiles, update new prompt
+    const contextualProfiles = await getContextualProfiles(userId, query);
+    const promptWithProfiles = `Current user profile: ${JSON.stringify(
+      currentUserProfile,
+      null,
+      2
+    )}\nUser query: "${query}"\nThe most relevant profiles: ${JSON.stringify(
+      contextualProfiles,
+      null,
+      2
+    )}`;
 
-    const chat = model.startChat({
+    currentChat.history.push({
+      role: "user",
+      parts: [{ text: promptWithProfiles }],
+    });
+
+    const chatSession = model.startChat({
       history: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `User query: "${query}"\nAvailable profiles: ${JSON.stringify(
-                similarProfiles,
-                null,
-                2
-              )}`,
-            },
-          ],
-        },
+        ...cleanChatHistory(currentChat.history),
         {
           role: "model",
           parts: [
             {
-              text: "You are a helpful networking assistant. Your goal is to suggest relevant people based on the user's interests and explain why they might be good connections.",
+              text: "Speak in a professional, friendly, and first-person tone, using words like 'I' and 'let me'. You are a helpful networking assistant. Your goal is to suggest relevant people to the user based on: 1) The user's query (first priority), and 2) The user's profile (second priority). Explain why they might be good connections. Always mention the suggested people's ID and name. Include the IDs and names in this format: (ID: 123, Name: John Doe)—no need to mention the similarity score. Provide a maximum of 3 suggestions. Do not respond in code block format.",
             },
           ],
         },
       ],
       generationConfig: {
         temperature: 0.8,
-        maxOutputTokens: 200,
+        maxOutputTokens: 300,
       },
-      // safetySettings: [
-      //   { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM" },
-      // ],
     });
 
-    const result = await chat.sendMessage(query);
-    const response = result.response;
-    const text = response.text();
-    console.log(text);
-    res.json({ message: text });
+    const result = await chatSession.sendMessage(promptWithProfiles);
+    const responseText = result.response.text();
+
+    currentChat.history.push({
+      role: "model",
+      parts: [{ text: responseText }],
+    });
+
+    await currentChat.save();
+
+    // Extract suggested IDs from response
+    const ids = extractIdsFromResponse(responseText);
+
+    res.json({
+      message: responseText,
+      suggestedIds: ids,
+    });
   } catch (error) {
     console.error("Error in /chat endpoint:", error);
     res.status(500).json({
@@ -120,105 +127,3 @@ app.post("/chat", async (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
-
-/*
-
-// Helper function to create embeddings for a text
-async function createEmbedding(text) {
-  const response = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: text,
-  });
-  return response.data[0].embedding;
-}
-
-// Helper function to find similar profiles using embeddings
-async function findSimilarProfiles(query) {
-  const queryEmbedding = await createEmbedding(query);
-
-  // For each member, create an embedding of their skills and interests
-  const profilesWithScores = await Promise.all(
-    members.map(async (member) => {
-      const profileText = `${member.skills.join(" ")} ${member.interests.join(
-        " "
-      )}`;
-      const profileEmbedding = await createEmbedding(profileText);
-
-      // Calculate cosine similarity
-      const similarity = cosineSimilarity(queryEmbedding, profileEmbedding);
-      return { ...member, similarity };
-    })
-  );
-
-  // Sort by similarity score
-  return profilesWithScores.sort((a, b) => b.similarity - a.similarity);
-}
-
-// Helper function to calculate cosine similarity
-function cosineSimilarity(vecA, vecB) {
-  const dotProduct = vecA.reduce((acc, val, i) => acc + val * vecB[i], 0);
-  const normA = Math.sqrt(vecA.reduce((acc, val) => acc + val * val, 0));
-  const normB = Math.sqrt(vecB.reduce((acc, val) => acc + val * val, 0));
-  return dotProduct / (normA * normB);
-}
-
-app.post("/chat", async (req, res) => {
-  const { query } = req.body;
-  if (!query) {
-    return res.status(400).json({ error: "No query provided" });
-  }
-
-
-const completion = await client.chat.completions.create({
-  model: "gpt-4o",
-  messages: [{
-      role: "user",
-        content: "Write a one-sentence bedtime story about a unicorn.",
-      },
-    ],
-  });
-
-  const response = completion.choices[0].message.content;
-  console.log(response);
-
-  // try {
-  //   // Find similar profiles
-  //   const similarProfiles = await findSimilarProfiles(query);
-
-  //   // Generate response using ChatGPT
-  //   const completion = await openai.chat.completions.create({
-  //     model: "gpt-3.5-turbo",
-  //     messages: [
-  //       {
-  //         role: "system",
-  //         content:
-  //           "You are a helpful networking assistant. Your goal is to suggest relevant people based on the user's interests and explain why they might be good connections.",
-  //       },
-  //       {
-  //         role: "user",
-  //         content: `User query: "${query}"\nAvailable profiles: ${JSON.stringify(
-  //           similarProfiles,
-  //           null,
-  //           2
-  //         )}`,
-  //       },
-  //     ],
-  //     temperature: 0.7,
-  //     max_tokens: 500,
-  //   });
-
-  //   const response = completion.choices[0].message.content;
-  //   res.json({
-  //     message: response,
-  //     suggestedProfiles: similarProfiles,
-  //   });
-  // } catch (error) {
-  //   console.error(
-  //     "Error:",
-  //     error.response ? error.response.data : error.message
-  //   );
-  //   res.status(500).json({ error: "Error processing the request." });
-  // }
-});
-
- */

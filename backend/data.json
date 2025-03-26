@@ -488,5 +488,12 @@
     "age": 26,
     "profession": "Veterinarian",
     "interests": ["wildlife conservation", "painting"]
+  },
+  {
+    "id": "71",
+    "name": "Tri Nguyen",
+    "age": 20,
+    "profession": "Software Engineer",
+    "interests": ["AI development", "Mathematics", "gym", "dogs", "cooking"]
   }
 ]

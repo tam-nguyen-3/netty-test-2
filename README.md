@@ -101,10 +101,10 @@ npm test
 
 ## 🔄 API Endpoints
 
-- **POST /auth/register**: Register a new user
+- **POST /auth/create-profile**: Register a new user
 - **POST /auth/login**: Authenticate a user
+- **GET /auth/auto-login**: Valid JWT token
 - **POST /chat**: Process a chat query and return suggestions
-- **GET /history/:userId**: Retrieve chat history for a user
 
 ## 🤝 Contributing
 
